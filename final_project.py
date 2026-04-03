@@ -1,29 +1,27 @@
 import gradio as gr
-
-# Import chat function from day5
 from day5 import chat
 
-# ==========================================
-# UI Setup
-# ==========================================
-
-theme = gr.themes.Soft(font=["Inter", "system-ui", "sans-serif"])
+theme = gr.themes.Soft()
 
 with gr.Blocks(title="InsureLLM RAG System", theme=theme) as app:
 
-    gr.Markdown("# 🏢 InsureLLM Corporate Knowledge Base")
-    gr.Markdown("Powered by Local Llama 3 + ChromaDB")
+    gr.Markdown("# InsureLLM Knowledge Base")
+    gr.Markdown("Groq + Hybrid RAG + Memory")
 
-    # Only Chatbot (Removed evaluation tab)
-    gr.ChatInterface(
-        fn=chat,
-        description="Ask me anything about InsureLLM's products, employees, or contracts.",
+    doc_filter = gr.Dropdown(
+        choices=["all", "employees", "products", "contracts"],
+        value="all",
+        label="Filter by document type"
     )
 
-# ==========================================
-# Launch
-# ==========================================
+    def wrapped_chat(message, history, doc_filter):
+        filter_value = None if doc_filter == "all" else doc_filter
+        return chat(message, history, filter_value)
+
+    gr.ChatInterface(
+        fn=wrapped_chat,
+        additional_inputs=[doc_filter]
+    )
 
 if __name__ == "__main__":
-    print("Launching InsureLLM Chatbot...")
     app.launch(inbrowser=True)

@@ -20,5 +20,5 @@ if count > 0:
     print(f"\nSAMPLE DATA IN DATABASE:")
     print(sample['documents'][0][:200] + "...")
 else:
-    print("\n❌ THE DATABASE IS EMPTY.")
+    print("\nTHE DATABASE IS EMPTY.")
     print("Check your 'knowledge-base' folder path in day5.py!")

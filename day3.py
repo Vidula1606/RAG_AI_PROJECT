@@ -1,29 +1,39 @@
 import gradio as gr
+import os
+from dotenv import load_dotenv
+
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.chat_models import ChatOllama
+from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 
 # ==========================================
-# 1. Database Connection & Model Setup
+# 1. Load API Key
+# ==========================================
+load_dotenv()
+GROQ_API_KEY = os.getenv("API_KEY")
+
+# ==========================================
+# 2. Database Connection & Model Setup
 # ==========================================
 DB_NAME = "vector_db"
 
-# Connect to the local Chroma database you built earlier
 print("Connecting to vector database...")
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 vectorstore = Chroma(persist_directory=DB_NAME, embedding_function=embeddings)
 
-# Turn the database into a LangChain Retriever
 retriever = vectorstore.as_retriever()
 
-# Initialize the local Llama model via Ollama
-# (temperature=0 makes the model more factual and less prone to hallucination)
-print("Initializing local LLM...")
-llm = ChatOllama(model="llama3", temperature=0)
+# Initialize Groq LLM (fast inference)
+print("Initializing Groq LLM...")
+llm = ChatGroq(
+    groq_api_key=GROQ_API_KEY,
+    model_name="llama3-70b-8192",  # or "mixtral-8x7b-32768"
+    temperature=0
+)
 
 # ==========================================
-# 2. Prompt & RAG Logic
+# 3. Prompt & RAG Logic
 # ==========================================
 SYSTEM_PROMPT_TEMPLATE = """
 You are a knowledgeable, friendly assistant representing the company Insurellm.
@@ -36,33 +46,33 @@ Context:
 """
 
 def answer_question(question: str, history):
-    """Retrieves context and generates a response using the local LLM."""
-    
-    # Step A: Retrieve relevant documents from Chroma
+    # Retrieve relevant documents
     docs = retriever.invoke(question)
     
-    # Step B: Format the retrieved text into a single block
+    # Combine retrieved content
     context = "\n\n".join(doc.page_content for doc in docs)
     
-    # Step C: Inject the context into the system prompt
+    # Create system prompt
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(context=context)
     
-    # Step D: Send the prompt and the user's question to the Llama model
+    # Prepare messages
     messages = [
-        SystemMessage(content=system_prompt), 
+        SystemMessage(content=system_prompt),
         HumanMessage(content=question)
     ]
+    
+    # Generate response
     response = llm.invoke(messages)
     
     return response.content
 
 # ==========================================
-# 3. Launch Application Interface
+# 4. Launch Application Interface
 # ==========================================
 if __name__ == "__main__":
     demo = gr.ChatInterface(
         fn=answer_question,
-        title="InsureLLM Assistant",
-        description="A professional RAG chatbot powered by local Llama 3 and LangChain."
+        title="InsureLLM Assistant (Groq)",
+        description="A professional RAG chatbot powered by Groq + LangChain."
     )
     demo.launch(inbrowser=True)
