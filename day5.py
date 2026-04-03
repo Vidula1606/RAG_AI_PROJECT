@@ -18,13 +18,14 @@ GROQ_API_KEY = os.getenv("API_KEY")
 # 2. Setup Models + DB
 # ==========================================
 DB_NAME = "vector_db"
+#error handling for missing db
+def check_db_exists():
+    if not os.path.exists(DB_NAME):
+        return False, "⚠️ Vector database not found. Please run the ingestion script first."
+    return True, "✅ Database loaded successfully."
+db_ok, db_status = check_db_exists()
 
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
-vectorstore = Chroma(
-    persist_directory=DB_NAME,
-    embedding_function=embeddings
-)
 
 llm = ChatGroq(
     groq_api_key=GROQ_API_KEY,
@@ -60,9 +61,12 @@ def build_bm25_index():
     bm25 = BM25Okapi(tokenized)
 
     return bm25, docs, metas
-
-bm25, bm25_docs, bm25_meta = build_bm25_index()
-
+if db_ok:
+    vectorstore = Chroma(persist_directory=DB_NAME, embedding_function=embeddings)
+    bm25, bm25_docs, bm25_meta = build_bm25_index()
+else:
+    vectorstore = None
+    bm25 = bm25_docs = bm25_meta = None
 # ==========================================
 # 5. Query Rewriting 
 # ==========================================
@@ -87,6 +91,8 @@ Rewritten standalone question:
 # 6. BM25 Search
 # ==========================================
 def bm25_search(query, k=6, filter_type=None):
+    if bm25 is None:
+        return []
     tokens = query.lower().split()
     scores = bm25.get_scores(tokens)
 
@@ -111,6 +117,8 @@ def bm25_search(query, k=6, filter_type=None):
 # 7. Vector Search
 # ==========================================
 def vector_search(query, k=6, filter_type=None):
+    if vectorstore is None:
+        return []
     if filter_type:
         docs = vectorstore.similarity_search(
             query,
@@ -146,7 +154,11 @@ def hybrid_search(query, k=12, filter_type=None):
 # 9. Chat Function 
 # ==========================================
 def chat(message, history, doc_filter=None):
+    if not db_ok:
+        return "❌ The knowledge base is not available. Please set up the database first."
 
+    if not message.strip():
+        return "Please enter a question."
     # Step 1: Rewrite query (fixes follow-ups)
     standalone_query = rewrite_query(message)
 
@@ -156,6 +168,8 @@ def chat(message, history, doc_filter=None):
         k=12,
         filter_type=doc_filter
     )
+    if not retrieved_docs or all(len(doc.strip()) < 20 for doc in retrieved_docs):
+        return "I couldn't find relevant information in the InsureLLM knowledge base for your question."
 
     context = "\n\n".join(retrieved_docs)
 
