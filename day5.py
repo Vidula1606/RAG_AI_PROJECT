@@ -18,19 +18,24 @@ GROQ_API_KEY = os.getenv("API_KEY")
 # 2. Setup Models + DB
 # ==========================================
 DB_NAME = "vector_db"
-#error handling for missing db
+
+
+# error handling for missing db
 def check_db_exists():
     if not os.path.exists(DB_NAME):
-        return False, "⚠️ Vector database not found. Please run the ingestion script first."
+        return (
+            False,
+            "⚠️ Vector database not found. Please run the ingestion script first.",
+        )
     return True, "✅ Database loaded successfully."
+
+
 db_ok, db_status = check_db_exists()
 
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 llm = ChatGroq(
-    groq_api_key=GROQ_API_KEY,
-    model_name="llama-3.1-8b-instant",
-    temperature=0
+    groq_api_key=GROQ_API_KEY, model_name="llama-3.1-8b-instant", temperature=0
 )
 
 # ==========================================
@@ -38,15 +43,16 @@ llm = ChatGroq(
 # ==========================================
 memory_buffer = []
 
+
 def update_memory(user, bot):
     memory_buffer.append((user, bot))
     if len(memory_buffer) > 4:
         memory_buffer.pop(0)
 
+
 def get_memory_text():
-    return "\n".join(
-        [f"User: {u}\nAssistant: {b}" for u, b in memory_buffer]
-    )
+    return "\n".join([f"User: {u}\nAssistant: {b}" for u, b in memory_buffer])
+
 
 # ==========================================
 # 4. Build BM25 Index
@@ -61,14 +67,18 @@ def build_bm25_index():
     bm25 = BM25Okapi(tokenized)
 
     return bm25, docs, metas
+
+
 if db_ok:
     vectorstore = Chroma(persist_directory=DB_NAME, embedding_function=embeddings)
     bm25, bm25_docs, bm25_meta = build_bm25_index()
 else:
     vectorstore = None
     bm25 = bm25_docs = bm25_meta = None
+
+
 # ==========================================
-# 5. Query Rewriting 
+# 5. Query Rewriting
 # ==========================================
 def rewrite_query(query):
     history = get_memory_text()
@@ -87,6 +97,7 @@ Rewritten standalone question:
 
     return llm.invoke(prompt).content.strip()
 
+
 # ==========================================
 # 6. BM25 Search
 # ==========================================
@@ -103,15 +114,13 @@ def bm25_search(query, k=6, filter_type=None):
         if filter_type and bm25_meta[idx]["doc_type"] != filter_type:
             continue
 
-        results.append({
-            "content": bm25_docs[idx],
-            "score": scores[idx]
-        })
+        results.append({"content": bm25_docs[idx], "score": scores[idx]})
 
         if len(results) >= k:
             break
 
     return results
+
 
 # ==========================================
 # 7. Vector Search
@@ -121,17 +130,16 @@ def vector_search(query, k=6, filter_type=None):
         return []
     if filter_type:
         docs = vectorstore.similarity_search(
-            query,
-            k=k,
-            filter={"doc_type": filter_type}
+            query, k=k, filter={"doc_type": filter_type}
         )
     else:
         docs = vectorstore.similarity_search(query, k=k)
 
     return [{"content": d.page_content, "score": 1.0} for d in docs]
 
+
 # ==========================================
-# 8. Hybrid Search 
+# 8. Hybrid Search
 # ==========================================
 def hybrid_search(query, k=12, filter_type=None):
     bm25_res = bm25_search(query, k, filter_type)
@@ -150,12 +158,15 @@ def hybrid_search(query, k=12, filter_type=None):
 
     return [text for text, _ in ranked[:k]]
 
+
 # ==========================================
-# 9. Chat Function 
+# 9. Chat Function
 # ==========================================
 def chat(message, history, doc_filter=None):
     if not db_ok:
-        return "❌ The knowledge base is not available. Please set up the database first."
+        return (
+            "❌ The knowledge base is not available. Please set up the database first."
+        )
 
     if not message.strip():
         return "Please enter a question."
@@ -163,11 +174,7 @@ def chat(message, history, doc_filter=None):
     standalone_query = rewrite_query(message)
 
     # Step 2: Retrieve better context
-    retrieved_docs = hybrid_search(
-        standalone_query,
-        k=12,
-        filter_type=doc_filter
-    )
+    retrieved_docs = hybrid_search(standalone_query, k=12, filter_type=doc_filter)
     if not retrieved_docs or all(len(doc.strip()) < 20 for doc in retrieved_docs):
         return "I couldn't find relevant information in the InsureLLM knowledge base for your question."
 
@@ -189,10 +196,7 @@ Context:
 {context}
 """
 
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=message)
-    ]
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=message)]
 
     # Step 4: Generate response
     response = llm.invoke(messages).content

@@ -29,7 +29,7 @@ print("Initializing Groq LLM...")
 llm = ChatGroq(
     groq_api_key=GROQ_API_KEY,
     model_name="llama3-70b-8192",  # or "mixtral-8x7b-32768"
-    temperature=0
+    temperature=0,
 )
 
 # ==========================================
@@ -45,26 +45,25 @@ Context:
 {context}
 """
 
+
 def answer_question(question: str, history):
     # Retrieve relevant documents
     docs = retriever.invoke(question)
-    
+
     # Combine retrieved content
     context = "\n\n".join(doc.page_content for doc in docs)
-    
+
     # Create system prompt
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(context=context)
-    
+
     # Prepare messages
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=question)
-    ]
-    
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=question)]
+
     # Generate response
     response = llm.invoke(messages)
-    
+
     return response.content
+
 
 # ==========================================
 # 4. Launch Application Interface
@@ -73,6 +72,6 @@ if __name__ == "__main__":
     demo = gr.ChatInterface(
         fn=answer_question,
         title="InsureLLM Assistant (Groq)",
-        description="A professional RAG chatbot powered by Groq + LangChain."
+        description="A professional RAG chatbot powered by Groq + LangChain.",
     )
     demo.launch(inbrowser=True)
