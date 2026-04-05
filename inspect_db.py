@@ -18,7 +18,7 @@ if count > 0:
     # Peek at the very first thing in the database
     sample = vectorstore._collection.get(limit=1)
     print(f"\nSAMPLE DATA IN DATABASE:")
-    print(sample['documents'][0][:200] + "...")
+    print(sample["documents"][0][:200] + "...")
 else:
     print("\nTHE DATABASE IS EMPTY.")
     print("Check your 'knowledge-base' folder path in day5.py!")
