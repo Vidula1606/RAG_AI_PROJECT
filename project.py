@@ -1,5 +1,5 @@
 import gradio as gr
-from advanced_retrieval_logic_4 import chat, DB_NAME
+from backend import chat, DB_NAME
 import os
 
 # ==========================================
