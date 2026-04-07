@@ -2,206 +2,79 @@ import os
 import numpy as np
 from dotenv import load_dotenv
 from rank_bm25 import BM25Okapi
-
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 
 # ==========================================
-# 1. Load API Key
+# 1. Setup and Configurations
 # ==========================================
 load_dotenv()
 GROQ_API_KEY = os.getenv("API_KEY")
-
-# ==========================================
-# 2. Setup Models + DB
-# ==========================================
 DB_NAME = "vector_db"
 
-
-# error handling for missing db
-def check_db_exists():
-    if not os.path.exists(DB_NAME):
-        return (
-            False,
-            "⚠️ Vector database not found. Please run the ingestion script first.",
-        )
-    return True, "✅ Database loaded successfully."
-
-
-db_ok, db_status = check_db_exists()
-
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name="llama-3.1-8b-instant", temperature=0)
 
-llm = ChatGroq(
-    groq_api_key=GROQ_API_KEY, model_name="llama-3.1-8b-instant", temperature=0
-)
-
-# ==========================================
-# 3. Manual Memory
-# ==========================================
-memory_buffer = []
-
-
-def update_memory(user, bot):
-    memory_buffer.append((user, bot))
-    if len(memory_buffer) > 4:
-        memory_buffer.pop(0)
-
-
-def get_memory_text():
-    return "\n".join([f"User: {u}\nAssistant: {b}" for u, b in memory_buffer])
-
-
-# ==========================================
-# 4. Build BM25 Index
-# ==========================================
-def build_bm25_index():
-    data = vectorstore._collection.get(include=["documents", "metadatas"])
-
-    docs = data["documents"]
-    metas = data["metadatas"]
-
-    tokenized = [d.lower().split() for d in docs]
-    bm25 = BM25Okapi(tokenized)
-
-    return bm25, docs, metas
-
-
-if db_ok:
+# Initialize Database and BM25
+if os.path.exists(DB_NAME):
     vectorstore = Chroma(persist_directory=DB_NAME, embedding_function=embeddings)
-    bm25, bm25_docs, bm25_meta = build_bm25_index()
+    data = vectorstore._collection.get(include=["documents", "metadatas"])
+    bm25_docs, bm25_meta = data["documents"], data["metadatas"]
+    bm25 = BM25Okapi([d.lower().split() for d in bm25_docs])
 else:
-    vectorstore = None
-    bm25 = bm25_docs = bm25_meta = None
-
+    vectorstore = bm25 = None
 
 # ==========================================
-# 5. Query Rewriting
+# 2. Search Logic (Hybrid RAG)
 # ==========================================
-def rewrite_query(query):
-    history = get_memory_text()
-
-    prompt = f"""
-Rewrite the user's question into a clear standalone question.
-
-Conversation:
-{history}
-
-Question:
-{query}
-
-Rewritten standalone question:
-"""
-
+def rewrite_query(query, history):
+    if not history: return query
+    history_text = "\n".join([f"{m['role']}: {m['content']}" for m in history])
+    prompt = f"Rewrite this into a standalone question:\n\nChat:\n{history_text}\n\nQuestion: {query}"
     return llm.invoke(prompt).content.strip()
 
-
-# ==========================================
-# 6. BM25 Search
-# ==========================================
-def bm25_search(query, k=6, filter_type=None):
-    if bm25 is None:
-        return []
+def hybrid_search(query, k=6, filter_type=None):
+    if not vectorstore: return []
+    
+    # Vector Search
+    v_search = vectorstore.similarity_search(query, k=k, filter={"doc_type": filter_type} if filter_type else None)
+    vec_res = [{"content": d.page_content, "rank": i} for i, d in enumerate(v_search)]
+    
+    # BM25 Search
     tokens = query.lower().split()
     scores = bm25.get_scores(tokens)
-
     ranked = np.argsort(scores)[::-1]
-
-    results = []
+    bm25_res = []
     for idx in ranked:
-        if filter_type and bm25_meta[idx]["doc_type"] != filter_type:
-            continue
+        if filter_type and bm25_meta[idx]["doc_type"] != filter_type: continue
+        bm25_res.append({"content": bm25_docs[idx], "rank": len(bm25_res)})
+        if len(bm25_res) >= k: break
 
-        results.append({"content": bm25_docs[idx], "score": scores[idx]})
-
-        if len(results) >= k:
-            break
-
-    return results
-
-
-# ==========================================
-# 7. Vector Search
-# ==========================================
-def vector_search(query, k=6, filter_type=None):
-    if vectorstore is None:
-        return []
-    if filter_type:
-        docs = vectorstore.similarity_search(
-            query, k=k, filter={"doc_type": filter_type}
-        )
-    else:
-        docs = vectorstore.similarity_search(query, k=k)
-
-    return [{"content": d.page_content, "score": 1.0} for d in docs]
-
+    # Re-ranking (RRF)
+    scores = {}
+    for r in bm25_res + vec_res:
+        scores[r["content"]] = scores.get(r["content"], 0) + 1 / (60 + r["rank"])
+    
+    ranked_final = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    return [text for text, _ in ranked_final[:k]]
 
 # ==========================================
-# 8. Hybrid Search
-# ==========================================
-def hybrid_search(query, k=12, filter_type=None):
-    bm25_res = bm25_search(query, k, filter_type)
-    vec_res = vector_search(query, k, filter_type)
-
-    combined = {}
-
-    # More weight to semantic search
-    for r in bm25_res:
-        combined[r["content"]] = combined.get(r["content"], 0) + r["score"] * 0.4
-
-    for r in vec_res:
-        combined[r["content"]] = combined.get(r["content"], 0) + 0.6
-
-    ranked = sorted(combined.items(), key=lambda x: x[1], reverse=True)
-
-    return [text for text, _ in ranked[:k]]
-
-
-# ==========================================
-# 9. Chat Function
+# 3. Generation Logic
 # ==========================================
 def chat(message, history, doc_filter=None):
-    if not db_ok:
-        return (
-            "❌ The knowledge base is not available. Please set up the database first."
-        )
+    if not vectorstore: return "⚠️ Database not found."
+    
+    query = rewrite_query(message, history)
+    docs = hybrid_search(query, k=6, filter_type=doc_filter)
+    
+    if not docs:
+        return "I'm a chatbot for InsureLLM. I only answer questions about our employees and products."
 
-    if not message.strip():
-        return "Please enter a question."
-    # Step 1: Rewrite query (fixes follow-ups)
-    standalone_query = rewrite_query(message)
-
-    # Step 2: Retrieve better context
-    retrieved_docs = hybrid_search(standalone_query, k=12, filter_type=doc_filter)
-    if not retrieved_docs or all(len(doc.strip()) < 20 for doc in retrieved_docs):
-        return "I couldn't find relevant information in the InsureLLM knowledge base for your question."
-
-    context = "\n\n".join(retrieved_docs)
-
-    # Step 3: Inject memory
-    history_text = get_memory_text()
-
-    system_prompt = f"""
-You are an expert assistant for Insurellm.
-
-Conversation so far:
-{history_text}
-
-Use the context below to answer accurately.
-If information is missing, say so clearly.
-
-Context:
-{context}
-"""
-
+    context = "\n\n".join(docs)
+    system_prompt = f"You are an InsureLLM assistant. Use this context:\n{context}\n\nOnly answer about InsureLLM."
+    
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=message)]
-
-    # Step 4: Generate response
-    response = llm.invoke(messages).content
-
-    # Step 5: Update memory
-    update_memory(message, response)
-
-    return response
+    response = llm.invoke(messages)
+    return response.content
