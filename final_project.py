@@ -6,7 +6,7 @@ theme = gr.themes.Soft()
 with gr.Blocks(title="InsureLLM RAG System", theme=theme) as app:
     gr.Markdown("# 🏢 InsureLLM Knowledge Base Assistant")
     gr.Markdown("Ask questions about employees, products, or contracts.")
-    
+
     # Show database status at the top
     gr.Markdown(f"**System Status:** {db_status}")
 
@@ -14,7 +14,7 @@ with gr.Blocks(title="InsureLLM RAG System", theme=theme) as app:
         choices=["all", "employees", "products", "contracts"],
         value="all",
         label="Filter by document type",
-        info="Narrow your search to a specific category"
+        info="Narrow your search to a specific category",
     )
 
     def wrapped_chat(message, history, doc_filter):
@@ -32,8 +32,8 @@ with gr.Blocks(title="InsureLLM RAG System", theme=theme) as app:
         examples=[
             ["What insurance products does InsureLLM offer?"],
             ["Who are the employees in the sales department?"],
-            ["What are the contract terms?"]
-        ]
+            ["What are the contract terms?"],
+        ],
     )
 
 if __name__ == "__main__":
